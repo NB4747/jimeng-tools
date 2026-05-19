@@ -27,12 +27,17 @@ class JiMengClient:
         'a:has-text("登录")',
     ]
     # ProseMirror rich-text editor
-    _EDITOR_SELECTOR = ".tiptap.ProseMirror[contenteditable=\"true\"]"
-    # Submit button (becomes enabled once text is entered)
-    _SUBMIT_SELECTOR = ".submit-button-wD1gIc"
-    # Mode dropdown: switch to "图片生成"
-    _MODE_SELECT_SELECTOR = ".toolbar-select-DS5gGq"
+    _EDITOR_SELECTOR = ".prompt-editor-aDwTfA .tiptap.ProseMirror"
+    # Generate button in toolbar (step 9)
+    _GENERATE_SELECTOR = ".toolbar-actions-pDJQS6 button.lv-btn-primary"
+    # Mode switch (step 1): .lv-select-view-value containing mode names
     _MODE_TARGET_TEXT = "图片生成"
+    # Model selector after mode switch (step 3)
+    _MODEL_SELECTOR = ".content-Rvn0mS .lv-select.lv-select-single"
+    # Post-generation download (steps 10-13)
+    _DOWNLOAD_ICON = ".operation-button-JLhdr3 .icon-sDXMeC"
+    _HD_SWITCH = ".switch-row-FCPdlJ button.lv-switch"
+    _DOWNLOAD_BTN = ".footer-gb5SFI button.lv-btn-primary"
 
     def __init__(
         self,
@@ -79,10 +84,11 @@ class JiMengClient:
             await self._check_auth()
             await self._attach_network_listener()
             await self._ensure_image_gen_mode()
+            await self._ensure_model_selection()
             await self._fill_prompt(prompt)
-            await self._wait_for_submit_enabled()
             await self._click_generate()
-            image_url = await self._wait_for_image_url()
+            # Wait for generation to complete, then download via UI
+            image_url = await self._wait_and_download()
             return image_url
         finally:
             self._url_event = None
@@ -256,145 +262,174 @@ class JiMengClient:
     # ------------------------------------------------------------------
 
     async def _ensure_image_gen_mode(self):
-        """Switch mode dropdown to '图片生成' if not already selected."""
-        logger.info("Checking mode selector …")
-        # The mode switcher is a combobox showing current mode (Agent 模式 by default)
-        # Find it by looking for the visible .lv-select-view-value containing "Agent" or "图片"
-        mode_selects = self._page.locator(".lv-select-view-value")
-        target_select = None
-        for i in range(await mode_selects.count()):
-            el = mode_selects.nth(i)
+        """Step 1-2: Switch mode dropdown from Agent to 图片生成."""
+        logger.info("Step 1-2: Checking mode selector …")
+        # The mode switcher shows current mode text like "Agent 模式" or "图片生成"
+        mode_values = self._page.locator(".lv-select-view-value")
+        for i in range(await mode_values.count()):
+            el = mode_values.nth(i)
             if not await el.is_visible():
                 continue
             text = (await el.text_content() or "").strip()
-            if "Agent" in text or "图片生成" in text or "视频生成" in text:
-                target_select = el
-                break
-        if target_select is None:
-            logger.info("Mode selector not found, proceeding anyway.")
-            return
-        current = (await target_select.text_content() or "").strip()
-        if self._MODE_TARGET_TEXT in current:
-            logger.info("Already in 图片生成 mode.")
-            return
-        # Click to open the dropdown
-        logger.info("Switching mode from '%s' to 图片生成 …", current)
-        await target_select.click()
-        await self._page.wait_for_timeout(800)
-        # Look for the option in popup
-        popup = self._page.locator('[class*="select-popup"]').first
-        option = popup.get_by_text(self._MODE_TARGET_TEXT, exact=True)
-        try:
-            await option.wait_for(state="visible", timeout=3000)
+            if not any(kw in text for kw in ("Agent", "图片生成", "视频生成")):
+                continue
+            if "图片生成" in text:
+                logger.info("Already in 图片生成 mode.")
+                return
+            # Click to open dropdown and select 图片生成
+            logger.info("Switching mode from '%s' to 图片生成 …", text)
+            await el.click()
+            await self._page.wait_for_timeout(800)
+            # Step 2: click 图片生成 option (use .select-option-label-content)
+            option = self._page.locator(".select-option-label-content").filter(has_text="图片生成").first
             await option.click()
             logger.info("Mode switched to 图片生成.")
-        except Exception:
-            # Try clicking any visible element with the text
-            options = self._page.get_by_text(self._MODE_TARGET_TEXT, exact=True)
-            for j in range(await options.count()):
-                opt = options.nth(j)
-                if await opt.is_visible():
-                    await opt.click()
-                    logger.info("Mode switched to 图片生成.")
-                    return
-            logger.warning("Could not find 图片生成 option.")
+            await self._page.wait_for_timeout(1000)
+            return
+        logger.info("Mode selector not found, proceeding anyway.")
 
-    async def _wait_for_submit_enabled(self):
-        """Wait until the submit button becomes enabled."""
-        logger.info("Waiting for submit button to enable …")
-        submit_btn = self._page.locator(self._SUBMIT_SELECTOR).first
-        for _ in range(20):
-            disabled = await submit_btn.get_attribute("disabled")
-            if disabled is None:
-                logger.info("Submit button enabled.")
-                return
-            await self._page.wait_for_timeout(500)
-        logger.warning("Submit button still disabled after waiting.")
+    async def _ensure_model_selection(self):
+        """Step 3-4: Select the image model (e.g. 图片5.0 Lite) if not already."""
+        logger.info("Step 3-4: Checking model selection …")
+        await self._page.wait_for_timeout(500)
+        model_select = self._page.locator(self._MODEL_SELECTOR).nth(1)
+        if not await model_select.is_visible():
+            logger.info("Model selector not visible, skipping.")
+            return
+        await model_select.click()
+        await self._page.wait_for_timeout(500)
+        # Click the selected/first model option
+        option = self._page.locator(".lv-select-option-wrapper-selected .select-option-label-content").first
+        if not await option.is_visible():
+            option = self._page.locator(".select-option-label-content").first
+        await option.click()
+        logger.info("Model selected.")
+        await self._page.wait_for_timeout(500)
 
     async def _fill_prompt(self, prompt: str):
-        logger.info("Filling prompt …")
-        # ProseMirror tip-tap editor: find the visible contenteditable div
-        editors = self._page.locator(self._EDITOR_SELECTOR)
-        count = await editors.count()
-        for i in range(count):
-            editor = editors.nth(i)
-            if await editor.is_visible():
-                await editor.click()
-                await self._page.wait_for_timeout(300)
-                # Clear any existing content and type the prompt
-                await editor.press("Control+a")
-                await editor.press("Backspace")
-                await editor.press("Backspace")
-                await editor.type(prompt, delay=30)
-                logger.info("Prompt filled via ProseMirror editor #%d", i)
-                return
-        raise RuntimeError("Cannot locate the prompt input box on the page.")
+        """Step 5-8: Click the ProseMirror editor and type the prompt."""
+        logger.info("Step 5-8: Filling prompt …")
+        editor = self._page.locator(self._EDITOR_SELECTOR).first
+        await editor.wait_for(state="visible", timeout=5000)
+        # Click the empty placeholder to focus
+        placeholder = editor.locator("p.is-editor-empty").first
+        if await placeholder.is_visible():
+            await placeholder.click()
+        else:
+            await editor.click()
+        await self._page.wait_for_timeout(300)
+        # Clear existing content and type
+        await editor.press("Control+a")
+        await editor.press("Backspace")
+        await self._page.keyboard.type(prompt, delay=20)
+        logger.info("Prompt filled.")
 
     async def _click_generate(self):
-        logger.info("Clicking generate button …")
-        submit_btn = self._page.locator(self._SUBMIT_SELECTOR).first
-        # Wait until not disabled
-        for _ in range(20):
-            disabled = await submit_btn.get_attribute("disabled")
+        """Step 9: Click the generate button in toolbar."""
+        logger.info("Step 9: Clicking generate button …")
+        btn = self._page.locator(self._GENERATE_SELECTOR).first
+        # Wait for button to be enabled (not disabled by empty prompt)
+        for _ in range(30):
+            disabled = await btn.get_attribute("disabled")
             if disabled is None:
                 break
             await self._page.wait_for_timeout(500)
-        await submit_btn.click()
+        await btn.click()
         logger.info("Generate button clicked.")
 
     # ------------------------------------------------------------------
-    # Internal: polling
+    # Internal: post-generation download (steps 10-13)
     # ------------------------------------------------------------------
 
-    async def _wait_for_image_url(self) -> str:
-        """Wait for image URL via network interception, with DOM fallback."""
-        logger.info("Waiting for image URL (timeout=%ss) …", self._task_timeout)
-        try:
-            await asyncio.wait_for(
-                self._url_event.wait(), timeout=min(self._task_timeout, 45)
-            )
-        except asyncio.TimeoutError:
-            logger.info("Network interception timed out, trying DOM extraction …")
-            image_url = await self._extract_image_from_dom()
-            if image_url:
-                self._captured_image_url = image_url
-            else:
-                raise RuntimeError(
-                    "Image generation timed out after %ss. "
-                    "The task may still be processing on jimeng."
-                    % self._task_timeout
-                )
-        if not self._captured_image_url:
-            raise RuntimeError("Failed to capture an image URL.")
-        return self._captured_image_url
+    async def _wait_and_download(self) -> str:
+        """Wait for generation, then click through download UI to get image URL."""
+        logger.info("Waiting for generation to complete …")
+        # Wait for page to navigate to generate workspace
+        for _ in range(60):
+            if "/ai-tool/generate" in (self._page.url or ""):
+                break
+            await self._page.wait_for_timeout(1000)
+        # Let result images render
+        await self._page.wait_for_timeout(3000)
 
-    async def _extract_image_from_dom(self) -> Optional[str]:
-        """After generation, look for result <img> tags on the page."""
-        logger.info("Scanning DOM for result images …")
-        for _ in range(15):
-            await self._page.wait_for_timeout(2000)
-            # Look for large images in the result area
-            img_urls = await self._page.eval_on_selector_all(
-                "img[src*='dreamina-sign']",
-                "els => els.filter(el => el.naturalWidth > 200).map(el => el.src)"
-            )
-            if img_urls:
-                # Prefer original size URLs (resize:0:0)
-                for url in img_urls:
-                    if "resize:0:0" in url or "resize%3A0%3A0" in url:
-                        logger.info("Found original-size image: %s", url[:120])
-                        return url
-                # Fall back to the first image, but try to convert to original
-                url = img_urls[0]
-                # Replace resize suffixes to get original
-                original = re.sub(
-                    r'~tplv-[^.]+\.(webp|image)\?.*',
-                    r'~tplv-tb4s082cfz-resize:0:0.image',
-                    url,
-                )
-                logger.info("Found image (converted to original): %s", original[:120])
-                return original
-        return None
+        # Try network interception URL first
+        if self._captured_image_url:
+            logger.info("Got URL from network interception: %s", self._captured_image_url[:120])
+            return self._captured_image_url
+
+        # Fall back: click download icon → HD toggle → download button
+        logger.info("Trying UI download flow …")
+        return await self._ui_download()
+
+    async def _ui_download(self) -> str:
+        """Steps 10-13: Click download icon, toggle HD, click download."""
+        # Step 10: Click download icon on the first result card
+        icon = self._page.locator(self._DOWNLOAD_ICON).first
+        if await icon.is_visible():
+            await icon.click()
+            logger.info("Step 10: Download icon clicked.")
+            await self._page.wait_for_timeout(800)
+        else:
+            logger.warning("Download icon not visible.")
+
+        # Step 11: Toggle HD switch if present
+        hd_switch = self._page.locator(self._HD_SWITCH).first
+        if await hd_switch.is_visible():
+            # Check if it's already on; if not, toggle it
+            checked = await hd_switch.get_attribute("aria-checked")
+            if checked != "true":
+                await hd_switch.click()
+                logger.info("Step 11: HD switch toggled.")
+                await self._page.wait_for_timeout(300)
+        else:
+            logger.info("Step 11: HD switch not present, skipping.")
+
+        # Set up a one-shot network listener for the actual download
+        download_url_event = asyncio.Event()
+        download_url = []
+
+        async def _capture_download(response):
+            url = response.url
+            # Look for image download responses
+            if any(x in url for x in ("dreamina-sign", "byteimg.com")) and \
+               any(x in url for x in ("resize", ".image", ".png", ".jpeg", ".webp")):
+                download_url.append(url)
+                download_url_event.set()
+
+        self._page.on("response", _capture_download)
+
+        # Step 12: Click final download button
+        download_btn = self._page.locator(self._DOWNLOAD_BTN).first
+        if await download_btn.is_visible():
+            await download_btn.click()
+            logger.info("Step 12: Download button clicked.")
+        else:
+            logger.warning("Download button not visible.")
+
+        # Wait for download URL capture
+        try:
+            await asyncio.wait_for(download_url_event.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            pass
+
+        if download_url:
+            url = download_url[0]
+            logger.info("Captured download URL: %s", url[:120])
+            return url
+
+        # Last resort: extract from DOM
+        logger.info("Trying DOM extraction as last resort …")
+        img_urls = await self._page.eval_on_selector_all(
+            "img[src*='dreamina-sign']",
+            "els => els.filter(el => el.naturalWidth > 200).map(el => el.src)"
+        )
+        if img_urls:
+            for url in img_urls:
+                if "resize:0:0" in url:
+                    return url
+            return img_urls[0]
+
+        raise RuntimeError("Failed to get image URL from any source.")
 
 
 # ------------------------------------------------------------------
