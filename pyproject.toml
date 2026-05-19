@@ -1,8 +1,13 @@
 [project]
-name = "jimeng-mcp-bridge"
+name = "jimeng-mcp"
 version = "0.1.0"
-description = "基于 Playwright CDP 的即梦（jimeng.jianying.com）文本生图 MCP 服务"
+description = "Jimeng MCP Server for Claude Code"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "NB4747" },
+]
 dependencies = [
     "mcp>=1.27.0",
     "playwright>=1.59.0",
@@ -10,11 +15,11 @@ dependencies = [
 ]
 
 [project.scripts]
-jimeng-mcp = "src.main:main"
+jimeng-mcp = "main:main"
 
 [build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
+[tool.hatch.build.targets.wheel]
 packages = ["src"]

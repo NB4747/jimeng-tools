@@ -1,116 +1,128 @@
-# jimeng-mcp-bridge
+# jimeng-mcp
 
-基于 Playwright CDP 的即梦（jimeng.jianying.com）文本生图 MCP 服务。允许 AI 代理（如 Claude Code）接管本地已登录的 Chrome 浏览器，全自动操作即梦网页端生图，并通过拦截网络请求获取高清图片 URL 并下载到本地。
+> 即梦 AI × Claude Code —— 让 AI 助手直接调用即梦进行文生图、美术素材创作的 MCP 插件。
 
+无需 API Key，无需付费接口。利用 Playwright CDP 接管本地浏览器，全自动操作即梦网页端完成图片生成与下载。
 
-## 前置条件
+---
 
-- Python 3.10+
-- Chrome / Chromium 浏览器（你用 CDP 启动的那个）
+## 🚀 极致安装体验（一行命令）
 
-
-## 快速开始
-
-### 1. 安装依赖
+**不需要克隆项目，不需要手动安装依赖。** 只要电脑里有 [`uv`](https://docs.astral.sh/uv/) 和 Chrome 浏览器：
 
 ```bash
-cd jimeng-mcp-bridge
-py -3.12 -m pip install -r requirements.txt
+claude mcp add jimeng -- uvx --from git+https://github.com/NB4747/jimeng-tools.git jimeng-mcp
 ```
 
-> 本项目通过 CDP 连接你本机的 Chrome，无需安装 Playwright 自带的 Chromium。
+> 如果你 fork 了本项目，把 `NB4747/jimeng-tools` 换成你自己的 GitHub 用户名和仓库名。
 
-### 2. 启动宿主浏览器（带 CDP 端口）
+执行完毕后重启 Claude Code，MCP 服务即注册完成。
 
-**重要：** 在启动本服务前，必须完全关闭所有 Chrome 窗口，然后用以下命令重新启动：
+---
 
-**Windows:**
-```cmd
-"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeProfileForAgent"
+## 🔑 登录配置（双轨制）
+
+### 方式 A：自动浏览器扫码（推荐）
+
+默认模式，**零配置**。首次触发图片生成时：
+
+1. 系统自动弹出一个独立的 Chrome 窗口，打开即梦首页。
+2. 在窗口中扫码登录你的即梦账号。
+3. 登录成功后，保持窗口在后台（关闭也可以，Session 会被记录在 `%LOCALAPPDATA%\jimeng_mcp_chrome_profile` 中）。
+4. 后续使用无需再次登录。
+
+> 如果你提前用 `--remote-debugging-port=9222` 启动了 Chrome，系统会优先复用该实例，不会另外弹窗。
+
+### 方式 B：环境变量静默模式（高级用户）
+
+适合服务器环境或不想弹窗的用户。设置环境变量后，程序进入 **完全无头（headless）模式**，全程零界面。
+
+```powershell
+# Windows PowerShell
+$env:JIMENG_COOKIE = "your_cookie_string_here"
 ```
 
-**macOS:**
 ```bash
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222 --user-data-dir="$HOME/ChromeProfileForAgent"
+# Linux / macOS
+export JIMENG_COOKIE="your_cookie_string_here"
 ```
 
-**Linux:**
-```bash
-google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/ChromeProfileForAgent"
-```
+> **Cookie 获取方式**：在 Chrome 中按 F12 → Application → Cookies → jimeng.jianying.com，将需要的 cookie 复制拼接为 `name1=value1; name2=value2` 格式。
 
-启动后，在弹出的 Chrome 窗口中手动打开 [https://jimeng.jianying.com/ai-tool/home/](https://jimeng.jianying.com/ai-tool/home/) 并完成登录（扫码或手机验证码）。
+设置后运行 MCP 服务，即可静默后台生成。
 
-### 3. 验证 CDP 连接
+---
 
-浏览器启动后，访问 [http://localhost:9222/json](http://localhost:9222/json) 应能看到页面列表 JSON。
+## 🤖 使用示例
 
-### 4. 在 Claude Code 中配置 MCP
+在 Claude Code 中直接用大白话对话，工具会自动感知意图：
 
-在 Claude Code 的 MCP 配置文件中添加（项目级 `.claudecode/mcp_config.json` 或全局 `~/.config/Claude/claude_desktop_config.json`）：
+| 你说的话 | Claude 的行为 |
+|----------|--------------|
+| "帮我画一只像素风的猫咪" | 自动调用 `generate_game_asset`，prompt 为 "pixel art cat, cute, 8-bit style" |
+| "用即梦生成一张赛博朋克城市夜景" | 自动生成 cyberpunk city night scene |
+| "做一个武侠风格的游戏背景" | 自动生成 wuxia game background |
+| "设计一个 Q 版头像，日系风格" | 自动生成 anime chibi avatar |
+| "generate a fantasy castle game asset" | 自动生成游戏素材 |
 
-```json
-{
-  "mcpServers": {
-    "jimeng-bridge": {
-      "command": "py",
-      "args": ["-3.12", "E:/即梦skill/jimeng-mcp-bridge/src/main.py"]
-    }
-  }
-}
-```
-
-> 将路径替换为你本机的实际绝对路径。
-
-### 5. 使用
-
-配置完成后重启 Claude Code，即可调用 `generate_game_asset` 工具：
+你也可以直接指定工具：
 
 ```
-请用 generate_game_asset 生成一张图片，提示词：一只在森林里奔跑的白色狐狸，油画风格
+/mcp 用 generate_game_asset 生成一张油画风格的森林狐狸
 ```
 
+---
 
-## 项目结构
+## 📁 项目结构
 
 ```
 jimeng-mcp-bridge/
-├── requirements.txt      # Python 依赖
-├── config.json           # 配置文件（CDP 端口、超时、下载路径）
+├── pyproject.toml          # uv 项目配置，声明依赖与入口
+├── config.json             # CDP 端口、超时、下载路径等配置
+├── requirements.txt        # 传统 pip 依赖（供参考）
 ├── README.md
 └── src/
     ├── __init__.py
-    ├── main.py           # FastMCP 服务入口与工具定义
-    ├── jimeng_client.py  # Playwright CDP 核心控制与网络拦截
-    └── utils.py          # 异步图片下载工具
+    ├── main.py             # FastMCP 服务入口 + 双轨制登录逻辑
+    ├── jimeng_client.py    # Playwright CDP 核心控制 + 网络拦截
+    └── utils.py            # 异步图片下载
 ```
 
+---
 
-## config.json 说明
+## ⚙️ 配置说明
+
+`config.json`：
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `cdp_url` | string | `"http://localhost:9222"` | Chrome CDP 地址 |
-| `default_output_dir` | string | `"./downloads"` | 默认图片保存目录 |
+| `default_output_dir` | string | `"./downloads"` | 图片保存目录 |
 | `task_timeout` | number | `60` | 生图任务超时（秒） |
-| `api_patterns` | array | `["api/v1/task", ...]` | 拦截 API 的 URL 正则模式 |
+| `api_patterns` | array | `["api/v1/task", ...]` | 拦截 API 的 URL 正则 |
 | `poll_interval` | number | `1.0` | 轮询间隔（秒） |
 
+---
 
-## 故障排查
+## 🔧 本地开发
 
-| 现象 | 原因 | 解决 |
-|------|------|------|
-| "无法连接到 Chrome" | Chrome 未以 CDP 模式启动，或端口被占用 | 完全关闭 Chrome，按步骤 2 重新启动 |
-| "登录状态已失效" | 即梦网站登录过期 | 在弹出 Chrome 中手动重新登录即梦 |
-| 超时未获取到图片 | API URL 特征变化 | 检查实际网络请求，更新 config.json 中的 `api_patterns` |
-| "Cannot locate the prompt input box" | 即梦页面 UI 改版 | 更新 `jimeng_client.py` 中的 `_INPUT_PLACEHOLDERS` 选择器 |
+```bash
+# 1. 克隆项目
+git clone https://github.com/NB4747/jimeng-tools.git
+cd jimeng-tools
 
+# 2. 安装依赖
+uv sync
 
-## 技术原理
+# 3. 启动 Chrome CDP（可选；不启动则自动弹窗）
+"C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\ChromeProfileForAgent"
 
-1. 通过 Playwright 的 `connect_over_cdp` 接入用户本地 Chrome
-2. 复用已登录的 jimeng.jianying.com 页面，无需程序内填账号密码
-3. 在 `page.on("response")` 上注册监听器，拦截即梦后端 API 响应
-4. 从 JSON 响应体中提取高清图片 URL（多路径兼容）
-5. 使用 httpx 流式下载大图到本地磁盘
+# 4. 注册到 Claude Code
+claude mcp add jimeng -- uv run jimeng-mcp
+```
+
+---
+
+## 📄 License
+
+MIT
