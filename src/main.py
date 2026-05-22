@@ -221,6 +221,148 @@ async def generate_game_asset(prompt: str, output_path: str | None = None) -> st
         await client.close()
 
 
+@mcp.tool()
+async def generate_video_asset(
+    prompt: str,
+    duration: int = 5,
+    ratio: str = "16:9",
+    resolution: str = "720p",
+    output_path: str | None = None,
+) -> str:
+    """Generate an AI video on jimeng.jianying.com（即梦AI）and download it.
+
+    **When to call this tool:**
+    Use when the user asks for video generation — cutscenes, animated backgrounds,
+    skill effect videos, motion graphics, short clips.
+
+    Trigger phrases: 生成视频 / 做一段动画 / 过场 / 动态背景 / cutscene / animation
+
+    Parameters:
+        prompt: Video description in natural language.
+        duration: 5 or 10 seconds (2.x models only 5 s).
+        ratio: "16:9" / "9:16" / "1:1" / "4:3" / "3:4" / "21:9".
+        resolution: "1080p" / "720p" / "480p".
+        output_path: Save path. Defaults to ./downloads/<prompt>.mp4.
+    """
+    cookie = _config.get("cookie")
+    if not cookie:
+        return "【错误】视频生成需要 JIMENG_COOKIE 环境变量。请设置后重试。"
+
+    if not output_path:
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)
+        safe_name = safe_name.strip()[:60] or "video"
+        output_path = os.path.join(
+            _config.get("default_output_dir", "./downloads"),
+            safe_name + ".mp4",
+        )
+
+    try:
+        from jimeng_sdk import JimengClient as SDKClient
+        sdk = SDKClient(cookie=cookie, model="3.0")
+        task_id = await sdk.generate_video(
+            prompt, ratio=ratio, resolution=resolution, duration=duration,
+        )
+        video_url = await sdk.poll_video_status(task_id, timeout=1200)
+        await sdk.close()
+
+        success = await download_image(video_url, output_path)
+        if not success:
+            return f"【错误】视频下载失败。URL: {video_url}"
+
+        return f"【成功】视频已生成并保存至: {output_path}\n视频 URL: {video_url}"
+
+    except Exception as e:
+        logger.exception("Video generation failed.")
+        return f"【错误】视频生成失败: {e}"
+
+
+@mcp.tool()
+async def generate_image_variation(
+    prompt: str,
+    reference_path: str,
+    output_path: str | None = None,
+) -> str:
+    """Generate a new image based on a reference image (image-to-image/blend mode).
+
+    Upload the reference, then use Jimeng blend mode to create a variation.
+
+    Args:
+        prompt: Description of the desired output.
+        reference_path: Local file path or URL to the reference image.
+        output_path: Save path. Defaults to ./downloads/<prompt>.png.
+    """
+    cookie = _config.get("cookie")
+    if not cookie:
+        return "【错误】需要 JIMENG_COOKIE。"
+
+    if not output_path:
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)
+        safe_name = safe_name.strip()[:60] or "variation"
+        output_path = os.path.join(_config.get("default_output_dir", "./downloads"), safe_name + ".png")
+
+    try:
+        from jimeng_sdk import JimengClient as SDKClient
+        sdk = SDKClient(cookie=cookie)
+        task_id = await sdk.generate_image_to_image(prompt, reference_path)
+        image_url = await sdk.poll_task_status(task_id, timeout=180)
+        await sdk.close()
+
+        success = await download_image(image_url, output_path)
+        if not success:
+            return f"【错误】图片下载失败。URL: {image_url}"
+        return f"【成功】图片变体已保存至: {output_path}\n图片 URL: {image_url}"
+    except Exception as e:
+        logger.exception("Image variation failed.")
+        return f"【错误】{e}"
+
+
+@mcp.tool()
+async def generate_video_with_frames(
+    prompt: str,
+    first_frame: str = "",
+    end_frame: str = "",
+    duration: int = 5,
+    ratio: str = "16:9",
+    output_path: str | None = None,
+) -> str:
+    """Generate a video with optional start/end frame images (image-to-video).
+
+    Args:
+        prompt: Video description.
+        first_frame: Local path or URL for the starting frame image.
+        end_frame: Local path or URL for the ending frame image.
+        duration: 5 or 10 seconds.
+        ratio: "16:9" / "9:16" / "1:1" / "4:3" / "3:4" / "21:9".
+        output_path: Save path. Defaults to ./downloads/<prompt>.mp4.
+    """
+    cookie = _config.get("cookie")
+    if not cookie:
+        return "【错误】需要 JIMENG_COOKIE。"
+
+    if not output_path:
+        safe_name = "".join(c if c.isalnum() or c in " _-" else "_" for c in prompt)
+        safe_name = safe_name.strip()[:60] or "video"
+        output_path = os.path.join(_config.get("default_output_dir", "./downloads"), safe_name + ".mp4")
+
+    try:
+        from jimeng_sdk import JimengClient as SDKClient
+        sdk = SDKClient(cookie=cookie, model="3.0")
+        task_id = await sdk.generate_video_with_frames(
+            prompt, first_frame=first_frame, end_frame=end_frame,
+            ratio=ratio, duration=duration,
+        )
+        video_url = await sdk.poll_video_status(task_id, timeout=1200)
+        await sdk.close()
+
+        success = await download_image(video_url, output_path)
+        if not success:
+            return f"【错误】视频下载失败。URL: {video_url}"
+        return f"【成功】视频已保存至: {output_path}\n视频 URL: {video_url}"
+    except Exception as e:
+        logger.exception("Video with frames failed.")
+        return f"【错误】{e}"
+
+
 # ------------------------------------------------------------------
 # Entry point
 # ------------------------------------------------------------------
